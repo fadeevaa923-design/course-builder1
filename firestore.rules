@@ -1,0 +1,59 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    function roleDoc() {
+      return get(/databases/$(database)/documents/roles/$(request.auth.uid));
+    }
+    function isAdmin() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/roles/$(request.auth.uid))
+        && roleDoc().data.isAdmin == true;
+    }
+    function isHR() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/roles/$(request.auth.uid))
+        && roleDoc().data.isHR == true;
+    }
+
+    // Ролі задаються ТІЛЬКИ вручну через Firebase Console власником проєкту.
+    // Кожен може прочитати лише власний документ ролі (щоб дізнатись свої права).
+    match /roles/{uid} {
+      allow read: if isSignedIn() && request.auth.uid == uid;
+      allow write: if false;
+    }
+
+    // Приватний профіль користувача (ім'я з Google, відділ). Тільки власник.
+    match /users/{uid} {
+      allow read, write: if isSignedIn() && request.auth.uid == uid;
+    }
+
+    // Список курсів (короткі картки для каталогу) - читають усі авторизовані,
+    // редагує лише адмін.
+    match /courseIndex/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // Повний вміст курсу - читають усі авторизовані, редагує лише адмін.
+    match /courses/{courseId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // Прогрес проходження: id документа = {courseId}_{uid}.
+    // Читати може сам працівник, або адмін/HR (для звітів).
+    // Писати може лише в СВІЙ документ (uid у даних мусить збігатися з uid автора запиту).
+    match /progress/{progressId} {
+      allow read: if isSignedIn() &&
+        (resource.data.uid == request.auth.uid || isAdmin() || isHR());
+      allow create, update: if isSignedIn() &&
+        request.resource.data.uid == request.auth.uid;
+      allow delete: if false;
+    }
+  }
+}
